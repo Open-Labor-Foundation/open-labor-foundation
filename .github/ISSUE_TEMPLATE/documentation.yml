@@ -1,0 +1,27 @@
+name: Documentation Correction
+description: Report incorrect, outdated, or missing content in foundation documents
+title: "[Docs] "
+labels: ["documentation"]
+body:
+  - type: input
+    id: location
+    attributes:
+      label: File or section
+      description: Which file or section has the issue? (e.g. README.md, CONTRIBUTING.md § Contribute your expertise)
+      placeholder: "e.g. CONTRIBUTING.md"
+    validations:
+      required: true
+  - type: textarea
+    id: issue
+    attributes:
+      label: What's wrong
+      description: Describe the problem — incorrect information, a broken link, missing content, unclear wording.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested correction
+      description: What should it say instead? Leave blank if you're not sure.
+    validations:
+      required: false
