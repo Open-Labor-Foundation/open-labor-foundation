@@ -1,5 +1,7 @@
 # Contributing to the Open Labor Foundation
 
+> **A note on contributions:** This repository is public for transparency, but is not yet accepting external issues or pull requests directly. Issues are disabled repo-wide, and pull requests from outside collaborators aren't reviewed at this stage. This is expected to change as the project matures — check back, or watch [openlabor.foundation](https://openlabor.foundation) for updates.
+
 There are three ways to contribute: domain knowledge, ideas, and infrastructure. The first two require no technical background. The third is for engineers.
 
 We are actively building a streamlined contribution interface using [commons-idea](https://github.com/Open-Labor-Foundation/commons-idea), [commons-specs](https://github.com/Open-Labor-Foundation/commons-specs), and [commons-artifacts](https://github.com/Open-Labor-Foundation/commons-artifacts) — so that anyone can contribute without needing to navigate source code or understand the underlying tooling. That work is in progress. The paths below describe how the process is intended to work once it is complete, and how to contribute today if you are comfortable working directly with the repositories.
