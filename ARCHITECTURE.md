@@ -36,7 +36,11 @@ Chairs are not a separate concept commons-board staffs on its own. A chair is si
 
 **Both original gaps are fixed.** The missing-axis problem (commons-board's resolver could only search `naics-overlays`) is resolved by the two-axis catalog migration described under labor-commons, above. The duplication problem — commons-board resolving specialists on its own instead of going through commons-crew — is resolved at the identity level: every chair is now registered as a real commons-crew run at onboarding (`pa.createChairRun`, called via commons-crew's `POST /api/chairs`), giving it an audit trail, autonomy tiers, and `delegate_to_child` capability from the moment it's created.
 
-This is deliberately not a full replacement. commons-board still resolves *which specialist to preview and pin* for a chair using its own axis-aware labor-commons search — a legitimate, human-reviewable onboarding behavior, independent of the governance question. What's still open: a chair's registered commons-crew run isn't wired to anything after registration — actually routing an org's day-to-day task execution through it, so `delegate_to_child` chains fire for real and reach the line-level catalog (director → department → worker), is a distinct, larger integration that hasn't started. Until that exists, the hundreds of line-level specialists the catalog contains remain reachable in principle but not exercised in practice through commons-board.
+This is deliberately not a full replacement. commons-board still resolves *which specialist to preview and pin* for a chair using its own axis-aware labor-commons search — a legitimate, human-reviewable onboarding behavior, independent of the governance question.
+
+**A chair's registered run can now actually be used.** `POST /api/v1/board/requests/:id/dispatch-to-commons-crew` proposes a `delegate_to_child` dispatch of a board request to its target chair's commons-crew run — safe to call automatically, since proposing has no real-world effect. A **separate**, explicitly admin/operator-gated `POST .../dispatch-to-commons-crew/decision` is the only thing that can approve and execute it; `decision` is a required input with no default, so nothing auto-approves a real-world-impact action on a human's behalf. This split exists because an earlier draft of this feature auto-approved the delegation as part of the same call — a real governance-model violation, caught before merging, not after. Verified end to end against real running servers: propose → explicit approve → real delegated child run, and propose → explicit deny → no execution.
+
+Two things still genuinely open: first, nothing in commons-board's normal request lifecycle calls this dispatch mechanism automatically yet — an admin/operator has to trigger it explicitly per request, and reconciling it with the existing direct-LLM `chair-reasoning.ts` path (which this doesn't touch) is a deliberate, separate product decision, not made here. Second, there's no actor-identity bridge yet between commons-board's per-org users and commons-crew's workspace members — commons-crew's approval endpoint only recognizes its own seeded identity (`user_primary`), so the real deciding admin is recorded faithfully in commons-board's own audit log but not (yet) forwarded as commons-crew's actor of record. Until both are addressed, the hundreds of line-level specialists the catalog contains are technically reachable through a real, verified mechanism, but not exercised by default in day-to-day use.
 
 ### commons-crew — recursive delegation
 
@@ -44,7 +48,7 @@ The single mechanism used at every layer of an organization — including the ch
 
 **Built and merged to commons-crew's `main`.** `delegate_to_child` is a real action tool, going through the same governed propose/approve/execute loop as any other side-effecting action. Single-hop and multi-hop delegation both work end to end (chair → director → department → worker), verified by real tests against the actual public API, not mocked. `pa.createChairRun` registers a root run as a specific chair — a fixed v1 role set, expanded from six to eight to match commons-board's real onboarding domains (finance, legal, HR, marketing, operations, product, IT, security) — for a specific org, pre-authorized to delegate immediately, with that org context propagating down everything it spawns. Reachable externally via `POST /api/chairs`. `LocalCatalogService` scans both catalog axes. Full detail in commons-crew's own `docs/architecture.md`.
 
-**Current gap:** commons-board now calls `pa.createChairRun` once per chair at onboarding, so every chair is a real, governed commons-crew run — but that run is only ever registered, never used afterward. Routing an org's actual task execution through a chair's own commons-crew run, so `delegate_to_child` chains fire for real, is a distinct, larger integration that hasn't started (see commons-board, above, and commons-crew's own `docs/architecture.md` open questions).
+**Current gap:** commons-board now calls `pa.createChairRun` once per chair at onboarding, and can dispatch real work to that run via a proposal it explicitly approves (see commons-board, above). One primitive this uncovered and fixed: a chair's seeded delegation approval is one-shot by design (an approval authorizes one specific act, not a standing blank check), so a long-lived chair had no way to delegate a *second* time — `pa.requestDelegationApproval` (`POST /api/runs/:runId/delegation-approvals`) seeds a fresh one on request, verified live across multiple sequential dispatches to the same chair. What's still open: commons-board's normal request lifecycle doesn't call any of this automatically yet (an admin/operator has to trigger it per request), and there's no actor-identity bridge between commons-board's per-org users and commons-crew's workspace-membership model.
 
 ### artifact-commons — the second commons (new repository, not yet created)
 
@@ -57,22 +61,26 @@ This is a new repository, not a repurposing of `commons-artifacts` (see Relics, 
 ## Repository classification
 
 ### Core (the product itself)
+
 - **labor-commons** — the catalog
 - **commons-board** — governed authority
-- **commons-crew** — recursive delegation (built and merged; commons-board now registers every chair as a real instance at onboarding, but doesn't yet route live task execution through it)
+- **commons-crew** — recursive delegation (built and merged; commons-board registers every chair as a real instance at onboarding and can dispatch real work to it via an explicit-approval flow, but nothing in commons-board's normal request lifecycle calls that automatically yet)
 - **artifact-commons** — reusable solutions (not yet created)
 
 ### Relics (early bootstrapping, superseded once the core works as intended)
+
 - **commons-idea** — intake via a hand-pasted LLM prompt; superseded once commons-crew provides native, in-product intake
 - **commons-specs** — community archive of written idea records; superseded by the same
 - **commons-artifacts** — the original deliverable/addin-sharing repo; retained only for its narrower original use case (sharing a standalone generated deliverable), with its addin-economy role moving to artifact-commons
 
 ### Maintenance (keep the product honest over time; no end user touches these)
+
 - **commons-keeper** — independent catalog health and cross-repo security review. Deliberately external and independent by design — the same reason labor-commons-curator's certification has to be independent of the thing it certifies.
 - **labor-commons-curator** — the specialist "contract" and an independently graded certification pipeline for trusting what's in the catalog. Independent for the same reason as commons-keeper.
 - **commons-devloop** — self-hosted autonomous development engine (issue in, reviewed PR out). Actively in use today, but transitional: its job — build capability — is exactly what commons-board is missing internally. Once commons-crew's recursive delegation gives commons-board real build capacity of its own, an external automation engine doing the same job from outside becomes redundant. Expected to be retired or absorbed into artifact-commons/commons-board, not maintained indefinitely as separate infrastructure.
 
 ### Delivery (how the product reaches people; not the product)
+
 - **foundation-site** — the public-facing website. Live, deployed, intentionally honest about how much of the stack is actually usable today. Mostly disconnected from the rest of the stack by design — its job is presence, not integration.
 - **open-labor-foundation** — this repository. The org-level home for documentation like this one; other repos should draw from it rather than each carrying their own account of the vision.
 
