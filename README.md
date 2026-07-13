@@ -63,6 +63,16 @@ covers that — the remaining barrier is packaging. A no-terminal deployment
 (desktop and mobile apps) is a near-term commitment, not built yet. See
 [ROADMAP.md](ROADMAP.md) for what's built versus in progress.
 
+## Governance
+
+Two questions, both answered in [GOVERNANCE.md](GOVERNANCE.md): what makes a
+determination binding inside one deployment (commons-board's autonomy
+tiers — never self-promoted, set by that org's own process), and what makes
+something trusted enough to be treated as binding across the whole commons
+(certification — who runs it, what happens on disagreement, how it gets
+revoked). See [ARCHITECTURE.md](ARCHITECTURE.md) for how the repos fit
+together.
+
 ## Contributing
 
 Three ways in: domain knowledge (via commons-idea, no code required), an
