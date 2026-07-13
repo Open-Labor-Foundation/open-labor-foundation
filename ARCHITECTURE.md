@@ -61,22 +61,26 @@ This is a new repository, not a repurposing of `commons-artifacts` (see Relics, 
 ## Repository classification
 
 ### Core (the product itself)
+
 - **labor-commons** — the catalog
 - **commons-board** — governed authority
 - **commons-crew** — recursive delegation (built and merged; commons-board registers every chair as a real instance at onboarding and can dispatch real work to it via an explicit-approval flow, but nothing in commons-board's normal request lifecycle calls that automatically yet)
 - **artifact-commons** — reusable solutions (not yet created)
 
 ### Relics (early bootstrapping, superseded once the core works as intended)
+
 - **commons-idea** — intake via a hand-pasted LLM prompt; superseded once commons-crew provides native, in-product intake
 - **commons-specs** — community archive of written idea records; superseded by the same
 - **commons-artifacts** — the original deliverable/addin-sharing repo; retained only for its narrower original use case (sharing a standalone generated deliverable), with its addin-economy role moving to artifact-commons
 
 ### Maintenance (keep the product honest over time; no end user touches these)
+
 - **commons-keeper** — independent catalog health and cross-repo security review. Deliberately external and independent by design — the same reason labor-commons-curator's certification has to be independent of the thing it certifies.
 - **labor-commons-curator** — the specialist "contract" and an independently graded certification pipeline for trusting what's in the catalog. Independent for the same reason as commons-keeper.
 - **commons-devloop** — self-hosted autonomous development engine (issue in, reviewed PR out). Actively in use today, but transitional: its job — build capability — is exactly what commons-board is missing internally. Once commons-crew's recursive delegation gives commons-board real build capacity of its own, an external automation engine doing the same job from outside becomes redundant. Expected to be retired or absorbed into artifact-commons/commons-board, not maintained indefinitely as separate infrastructure.
 
 ### Delivery (how the product reaches people; not the product)
+
 - **foundation-site** — the public-facing website. Live, deployed, intentionally honest about how much of the stack is actually usable today. Mostly disconnected from the rest of the stack by design — its job is presence, not integration.
 - **open-labor-foundation** — this repository. The org-level home for documentation like this one; other repos should draw from it rather than each carrying their own account of the vision.
 
