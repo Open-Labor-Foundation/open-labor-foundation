@@ -1,107 +1,157 @@
 # Architecture
 
-This document describes what the Open Labor Foundation stack is actually building toward, and where each repository fits. It is the canonical reference — other repos should draw from this rather than each maintaining their own account of the ecosystem.
+This document describes how the Open Labor Foundation repositories fit
+together — the structural wiring of the stack.
 
-## Mission
-
-The founding question behind this project: if AI can genuinely replace or augment labor at the level of a professional role, that claim should be proven, not asserted — and it should be proven in a controlled, governed environment, not a chaotic one.
-
-The proof starts with a single, comprehensive catalog of what every profession actually does, and builds upward from there into a governed system that can put that catalog to work — from the top of an organization's decision-making structure all the way down to the individual worker-level task, without collapsing into either an unaccountable autonomous agent or a system too shallow to matter.
-
-The end goal is to provide this system as open source, removing the operating burden — software costs, staffing overhead, administrative load — for a business owner in any industry, without requiring them to understand or manage the AI underneath it.
+- **The target** — what the stack is building toward, and the invariants any
+  correct version satisfies — lives in `VISION.md`. This document does not
+  restate it.
+- **Status** — what is built, in progress, broken, or planned — lives in issues
+  and the project board. This document contains none of it.
+- **Describing a mechanism here does not assert it exists.** This is the designed
+  structure; whether any given piece is built and working is an issue, not a line
+  in this file. If the wiring itself changes, update the description — never
+  record progress against it.
 
 ## The core loop
 
-Three repositories form the actual product. Everything else exists to build toward them, support them, or maintain them over time.
+Three repositories form the product; everything else builds toward, supports, or
+maintains them.
 
 ### labor-commons — the catalog
 
-A single catalog of specialist definitions, one per profession, seeded from the NAICS classification of essentially every industry and role in the US economy. Each definition specifies what an agent standing in for that profession is authorized to decide, what it must escalate or refuse, and the boundary that keeps it faithfully imitating the role rather than improvising past it.
+Specialist definitions, one per profession, with no runtime code. Laid out along
+two axes:
 
-The reuse principle is central: a definition isn't scoped to whichever business or workflow needed it first. Any part of the platform can invoke any specialist whose boundary fits, regardless of what originally motivated writing it.
+- `catalog/naics-overlays/{industry}/{specialist-slug}/spec.yaml` — what a
+  company operating *in* an industry needs.
+- `catalog/function-overlays/{domain}/{specialist-slug}/spec.yaml` — what any
+  organization's internal functions need (finance, HR, legal-and-compliance,
+  marketing, sales-and-revenue, operations, product, and others), independent of
+  the organization's own industry.
 
-labor-commons is deliberately just a catalog — no runtime code. Generation, maintenance, and certification are each pulled into their own repositories (see Maintenance, below), keeping the catalog itself thin and authoritative.
+A fast pre-scoping index (`data/catalogs/agent_catalog.sqlite`) is queried to
+narrow candidates before full `spec.yaml` files load. Consumers scan both axes:
+foundation-site's catalog-count script, commons-crew's catalog scanner, and
+commons-board's labor-commons readers.
 
-**The catalog has two axes, not one.** `catalog/naics-overlays/{industry}/{specialist-slug}/spec.yaml` answers "what does a company operating *in* this industry need" — the axis that exists today. It has no answer for the orthogonal question, "what does *any* organization's internal Finance, HR, Legal, Marketing, Sales, or Product function need, regardless of what industry the organization itself is in" — a generic corporate-function axis, not an industry-vertical one. That gap is why commons-board's chair-matching produces specialists a domain expert wouldn't have picked (see commons-board, below): the catalog was never searched over the right axis, because the right axis didn't exist.
-
-**Migrated.** The second axis now exists: `catalog/function-overlays/{domain}/{specialist-slug}/spec.yaml`, 260 specialist definitions across 22 functional domains (finance, HR, legal-and-compliance, marketing, sales-and-revenue, operations, product, and others), converted from mother-board's legacy `manifest.yaml` shape to the current `spec.yaml` schema, domain folder names stripped of the source's `director-of-` prefix to match how industry folders are named. The three downstream consumers that hardcoded `naics-overlays` specifically have all been widened to scan both axes: foundation-site's live catalog-count script, commons-crew's `LocalCatalogService` catalog scanner, and commons-board's labor-commons readers (`labor-commons-client.ts`, `specialist-resolver.ts`). `data/catalogs/agent_catalog.sqlite` — the fast pre-scoping index commons-board's readers query before loading full spec.yaml — is reconciled to match.
-
-**Practitioner corrections: both paths built.** commons-board's org roster page has a real UI form, populated from a chair's actual assigned specialists, that submits a field-level correction (which spec, which field, the proposed value, why) to `POST /api/v1/org/specialist-corrections`. It opens a real PR against labor-commons in an isolated `git worktree`, and never merges anything itself — the PR goes through the same review any other catalog change does (see Governance authority, below). **Correction:** an earlier version of this section said commons-crew's own path — a specialist correcting its own record mid-conversation, rather than a human editing it through commons-board's UI — wasn't built, and that half of the gap was still real. That's now closed too (commons-crew#17): `propose_spec_correction` mirrors commons-board's mechanism (same ephemeral-worktree, opens-a-PR, never-merges shape), and a task can autonomously *propose* one mid-conversation — but, deliberately, never auto-execute it. Filing a real PR against a shared, cross-org catalog with no external caller ever having asked for it is a materially different, higher-consequence action than `search_artifacts`'s read-only autonomous loop, so it's gated by its own explicit, narrow allowlist (`AUTONOMOUS_PROPOSE_ONLY_TOOL_DESCRIPTORS`), and a human still has to separately approve execution through the normal external action-proposal flow before anything actually opens. Building this surfaced and fixed a real pre-existing gap in commons-crew's own approval machinery: `createProposal` would have let this new tool silently inherit an unrelated, already-granted approval (the task's own permission to execute at all) as if a human had specifically approved a labor-commons PR, which no human had — see commons-crew's own `docs/architecture.md` for the full detail. **What's still open:** no deployment has `PA_LABOR_COMMONS_GH_TOKEN` configured yet, so this hasn't filed a real correction PR in production — same "real, merged, not yet configured" gap as labor-commons-curator's certification pipeline (see Governance authority, below).
+Practitioner corrections flow back through one shape: a correction (which spec,
+which field, proposed value, rationale) opens a PR against labor-commons from an
+isolated worktree and never self-merges — it goes through the same review as any
+other catalog change. Two entry points use this shape: commons-board's org-roster
+UI (a human editing a field) and commons-crew's `propose_spec_correction` (a task
+proposing one mid-conversation, propose-only, gated by its own narrow allowlist,
+with a human approving execution separately).
 
 ### commons-board — governed authority
 
-The proof that AI-run governance can work at the top of an organization. Structurally, commons-board is a collection of commons-crew instances — chairs, and everything beneath them — wrapped in governance: a chain of authority rather than a flat pool of agents, autonomy that only ever increases through explicit human promotion, never self-promotion, and an immutable audit trail before anything executes.
+The governance wrapper over a collection of commons-crew instances. Its concerns
+are the authority chain (board → chairs → directors → workers), the per-org
+autonomy tier, the immutable audit trail, and human oversight — not specialist
+resolution.
 
-Chairs are not a separate concept commons-board staffs on its own. A chair is simply the top-level commons-crew instance in that collection, governed and audited the same way every layer beneath it will be. commons-board's own job is the governance wrapper — authority chain, autonomy tier, audit trail, human oversight — not specialist resolution.
-
-**Both original gaps are fixed.** The missing-axis problem (commons-board's resolver could only search `naics-overlays`) is resolved by the two-axis catalog migration described under labor-commons, above. The duplication problem — commons-board resolving specialists on its own instead of going through commons-crew — is resolved at the identity level: every chair is now registered as a real commons-crew run at onboarding (`pa.createChairRun`, called via commons-crew's `POST /api/chairs`), giving it an audit trail, autonomy tiers, and `delegate_to_child` capability from the moment it's created.
-
-This is deliberately not a full replacement. commons-board still resolves *which specialist to preview and pin* for a chair using its own axis-aware labor-commons search — a legitimate, human-reviewable onboarding behavior, independent of the governance question.
-
-**A chair's registered run can now actually be used, through the product, not just a raw API call.** `POST /api/v1/board/requests/:id/dispatch-to-commons-crew` proposes a `delegate_to_child` dispatch of a board request to its target chair's commons-crew run — safe to call automatically, since proposing has no real-world effect. A **separate**, explicitly admin/operator-gated `POST .../dispatch-to-commons-crew/decision` is the only thing that can approve and execute it; `decision` is a required input with no default, so nothing auto-approves a real-world-impact action on a human's behalf. This split exists because an earlier draft of this feature auto-approved the delegation as part of the same call — a real governance-model violation, caught before merging, not after. Verified end to end against real running servers: propose → explicit approve → real delegated child run, and propose → explicit deny → no execution. **Correction:** an earlier version of this section said an audit found zero references to this route in commons-board's UI, and that no person using the shipped product could trigger it. Re-checked directly against the current code: that's no longer true (and per the git history, wasn't true for long after that audit ran). The board request's expanded row in `apps/web/app/board/page.tsx` has a real "Propose dispatch to chair" button, and once a proposal is awaiting a decision, real "Approve dispatch"/"Deny dispatch" buttons — plus status text for all four dispatch states (unavailable, awaiting decision, approved, denied). A request can also opt in, via a checkbox in that same row, to auto-propose the dispatch the moment its status becomes `"approved"` — the decision step stays a separate explicit action either way.
-
-**An actor-identity bridge is built and merged (commons-board#5).** commons-crew's approval endpoint checks workspace membership, and previously only recognized its own seeded identity (`user_primary`) — every commons-board decision was attributed to that placeholder regardless of who actually decided. `ensureBoardMemberIdentity` closes this using commons-crew's own existing user/membership system (`POST /api/users`, `POST /api/workspaces/:id/memberships` with an `approval_decision` permission) — no new commons-crew capability needed, just a commons-board-side bridge: a real commons-crew user + "supporting" membership per commons-board admin, namespaced by org so two orgs' same user id can't collide, created once and reused. Falls back to `user_primary` only if the bridge itself can't run. Live-verified: the bridged identity actually deciding a real approval, not just existing as a record.
-
-**`chair-reasoning.ts` resolved: not a competing path.** Traced both of `chair-reasoning.ts`'s call sites (`motherboard-chat.ts`, `meetings.ts`) — real-time chat and simulated-meeting responses, a synchronous single LLM call producing an immediate answer. Neither touches board requests or the dispatch mechanism at all; there's no overlap to reconcile. They serve genuinely different needs: `chair-reasoning.ts` is the advisory/conversational surface (talk to a chair, get an answer now), commons-crew dispatch is the governed-execution surface (have the chair's organization actually do the work, with an audit trail and delegation capability). A board request can get both — an instant chair-reasoned response for discussion, and, separately, real delegated execution once approved — they're complementary, not alternatives one should replace.
-
-What's still genuinely open: outside the opt-in checkbox, nothing in commons-board's normal request lifecycle calls the dispatch mechanism by default — a request that doesn't check the box is unaffected. Whether that checkbox should default on for every request is a real product call about latency/cost/risk tolerance, not an architectural question — left as-is (opt-in) until made deliberately. Until then, the hundreds of line-level specialists the catalog contains are reachable through a real, UI-verified mechanism, but only for a request whose approver opted in.
+- A chair is the top-level commons-crew instance in the collection, registered as
+  a real commons-crew run at onboarding (`pa.createChairRun` via
+  `POST /api/chairs`), giving it an audit trail, autonomy tier, and
+  `delegate_to_child` capability.
+- commons-board runs its own axis-aware labor-commons search to decide *which
+  specialist to preview and pin* for a chair at onboarding — a human-reviewable
+  step, distinct from governed execution.
+- A board request reaches a chair's run through a two-call split:
+  `POST /api/v1/board/requests/:id/dispatch-to-commons-crew` proposes the
+  delegation (no real-world effect), and a separate operator-gated
+  `.../dispatch-to-commons-crew/decision` approves and executes it. The decision
+  input has no default, so nothing auto-approves a real-world action.
+- Approvals are attributed to a real bridged identity per admin
+  (`ensureBoardMemberIdentity`), namespaced by org, not to a placeholder.
+- `chair-reasoning.ts` is the advisory/conversational surface (talk to a chair,
+  get an answer now); commons-crew dispatch is the governed-execution surface
+  (the chair's org actually does the work, audited). A request may use both —
+  they are complementary, not alternatives.
 
 ### commons-crew — recursive delegation
 
-The single mechanism used at every layer of an organization — including the chair itself. A chair is a commons-crew instance; it hands a request to a director, itself another commons-crew instance; the director hands it to a department, the department to a worker — each hop scoped one level down, independently assembling whatever specialist its task needs from labor-commons. This is also what makes the full breadth of labor-commons load-bearing rather than dormant: instead of only a chair-level slice of the catalog ever being reached, every layer, including the chair layer itself, resolves through the same recursive mechanism. commons-board is what you get when this collection of instances is wrapped in governance.
+The single mechanism at every layer, including the chair. Each hop is scoped one
+level down and assembles its own specialist from labor-commons.
 
-**Built and merged to commons-crew's `main`.** `delegate_to_child` is a real action tool, going through the same governed propose/approve/execute loop as any other side-effecting action. Single-hop and multi-hop delegation both work end to end (chair → director → department → worker), verified by real tests against the actual public API, not mocked. `pa.createChairRun` registers a root run as a specific chair — a fixed v1 role set, expanded from six to eight to match commons-board's real onboarding domains (finance, legal, HR, marketing, operations, product, IT, security) — for a specific org, pre-authorized to delegate immediately, with that org context propagating down everything it spawns. Reachable externally via `POST /api/chairs`. `LocalCatalogService` scans both catalog axes. Full detail in commons-crew's own `docs/architecture.md`.
-
-**`delegate_to_child`'s approval gate now actually respects the org's autonomy tier — previously it didn't, at any tier.** Before this fix, `delegate_to_child` required an explicit human approval at *every* hop of the chair → director → department → worker chain unconditionally, regardless of what autonomy tier the org had set. That meant `GOVERNANCE.md`'s "Per-organization authority" section — which describes Orchestrator and Autopilot as making determinations "presumptively binding within a pre-approved scope" — wasn't true yet for the one mechanism (recursive delegation) that section is actually about; the tier was recorded but had nothing downstream to gate. `computeDelegationRequiresApproval` (commons-crew's `packages/core/src/index.ts`) fixes this: `advisor` is unchanged (every hop gated, matching the description above), `orchestrator` auto-approves every hop except the final one into `worker` (where a task gets real tool access), and `autopilot` auto-approves every hop including into `worker`, capped by a hard numeric backstop (20 existing delegated runs per org) independent of tier. The org's tier is synced from commons-board — never decided by commons-crew itself — via `pa.setOrgAutonomyTier` / `PUT /api/orgs/:orgContext/autonomy-tier` (commons-crew#14), called by commons-board's own `syncOrgAutonomyTier` once per org during interview onboarding, before that org's chairs are registered (commons-board#9). An org with no synced tier still fails closed to `advisor`. Verified live against a real running commons-crew instance, not just the automated suite: a chair registered for an org synced to `orchestrator` had a `delegate_to_child` proposal auto-approve and actually execute (`child_run_delegated`), with zero human approval decisions anywhere in the call chain. **What's still open:** commons-board's separate *launch* onboarding flow sets its own `autonomy_policy` but never registers chairs at all, so orgs onboarded that way have nothing for a synced tier to gate yet — not a gap in this feature, since there's nothing there to gate, but worth naming so it isn't mistaken for also-covered.
-
-**Current gap:** commons-board now calls `pa.createChairRun` once per chair at onboarding, and can dispatch real work to that run via a proposal it explicitly approves (see commons-board, above — identity bridging for that approval, commons-board#5, is merged). One primitive this uncovered and fixed: a chair's seeded delegation approval is one-shot by design (an approval authorizes one specific act, not a standing blank check), so a long-lived chair had no way to delegate a *second* time — `pa.requestDelegationApproval` (`POST /api/runs/:runId/delegation-approvals`) seeds a fresh one on request, verified live across multiple sequential dispatches to the same chair. `search_artifacts` (`class_a`, read-only, no approval needed) is the commons-crew side of artifact-commons matching, built, merged, and verified live against the real artifact-commons repo (commons-crew#11). A real autonomous tool-selection loop that lets a task call `search_artifacts` on its own initiative — the actual missing piece flagged below — is also built and merged (commons-crew#13, superseding an earlier #12 that auto-closed when its base branch was deleted). **Correction:** an earlier version of this section said the autonomous invocation "hasn't been verified against a real model yet, only a deterministic test double." That's now stale — commons-crew's own `docs/architecture.md` documents a second verification pass against a real, separately-running process with a live `PA_PROVIDER_API_KEY` and Featherless's `Qwen/Qwen3-32B`: the model decided, unprompted, to call `search_artifacts`, found the real `gig-cooperative` artifact, and used it in its final answer. What's still open: outside a per-request opt-in checkbox, commons-board's normal request lifecycle doesn't call the dispatch mechanism by default (see commons-board, above) — see commons-crew's own `docs/architecture.md` for the current, precise status of the rest.
+- `delegate_to_child` is a governed action tool, running through the same
+  propose → approve → execute loop as any side-effecting action; single- and
+  multi-hop chains (chair → director → department → worker) delegate this way.
+- `computeDelegationRequiresApproval` gates each hop by the org's autonomy tier:
+  `advisor` gates every hop; `orchestrator` auto-approves every hop except the
+  final one into `worker`; `autopilot` auto-approves all hops, capped by a hard
+  numeric backstop independent of tier. The tier is synced down from
+  commons-board (`pa.setOrgAutonomyTier`), never decided by commons-crew; an
+  unsynced org fails closed to `advisor`.
+- `search_artifacts` is a read-only governed tool that searches artifact-commons
+  before build capability is used, invocable by a task through the autonomous
+  tool-selection loop across execution paths (`shared_runner`,
+  `isolated_subprocess`).
 
 ### artifact-commons — the second commons
 
-A peer catalog to labor-commons, holding not professional boundaries but previously built solutions. The same reuse principle applies one layer up: a solution built by one business isn't scoped to that business. Any other operator can use it as-is or adapt it, without needing to know the catalog exists — that responsibility sits with the platform (commons-board / commons-crew), not the user.
-
-The intended sequence when a gap is identified: check artifact-commons for an exact or close match first, adapt an existing artifact if one is close, and only build from scratch if nothing usable exists — then publish the result back so it's never built twice. This is what completes commons-board's "determines but can't close" gap: the actuation arm is check-then-adapt-then-build, with build-from-scratch as the exception, not the default.
-
-**Created, not a repurposing of `commons-artifacts`** (see Relics, below) — the clean separation avoided carrying forward a repo whose schema and history were shaped by an earlier, narrower idea. Holds the real content that had that role: `board-addins/gig-cooperative` and `board-addins/startup-launch`, migrated with a real pre-existing bug fixed in the process (a stale seed-file reference in `gig-cooperative`'s manifest). commons-artifacts' other category — standalone deliverables, unzip-and-run with no board required — was checked directly and never had a single real submission; there was nothing to migrate, and an empty category isn't worth forking across two repos.
-
-Both consumer sides are real and load-bearing: commons-board's `addin-registry.ts` reads this repo's `catalog.json` by default (not `commons-artifacts`' anymore), and commons-crew's `search_artifacts` action tool searches it as a governed, read-only tool — see commons-crew, below. **The check-then-adapt-then-build *sequencing* now covers production's default path, not just `shared_runner`.** A task calls `search_artifacts` automatically before answering, no external caller required, verified against a real model. **Correction:** an earlier version of this section said this only worked on the `shared_runner` execution path, and that production's default path for a specialist-assigned task (`isolated_subprocess`) never reached it — true when written, now fixed (commons-crew#16): the same governed loop now runs `isolated_subprocess` too, by making *how the model gets called* (in-process vs. a real child-process round trip per turn) swappable rather than porting the loop itself across the process boundary. Verified with a real spawned subprocess hitting a local fake model endpoint, not an in-process stand-in. `worker_container` is the one mode still not reached — it's a genuine container boundary with no callback path back into the governing process, and it's never a profile default (only reachable via an explicit env override), so it was left out of scope rather than silently ignored. There is also still no certification gate (see Governance authority, below) to trust a match before surfacing it; labor-commons-curator's newly-built gate is scoped to labor-commons specialists, not artifact-commons artifacts, and artifact-commons would need its own.
+A peer catalog holding previously built solutions (`board-addins/`), governed by
+the same reuse principle one layer up. commons-board reads its `catalog.json`
+through its addin registry; commons-crew reaches it through `search_artifacts`.
+The sequence when a gap is found: check for a match, adapt a close one, build from
+scratch only if nothing fits — then publish back.
 
 ## Repository classification
 
 ### Core (the product itself)
-
 - **labor-commons** — the catalog
 - **commons-board** — governed authority
-- **commons-crew** — recursive delegation (built and merged; commons-board registers every chair as a real instance at onboarding and can dispatch real work to it through a real UI with an explicit-approval flow, opt-in per request — not the default for every request yet)
-- **artifact-commons** — reusable solutions (created; real content, both consumer sides wired up; matching tool is invoked automatically on both `shared_runner` and `isolated_subprocess` — production's default specialist-task path — leaving only the non-default `worker_container` mode unreached; no certification gate yet)
+- **commons-crew** — recursive delegation
+- **artifact-commons** — reusable solutions
 
 ### Relics (early bootstrapping, superseded once the core works as intended)
-
-- **commons-idea** — intake via a hand-pasted LLM prompt; superseded once commons-crew provides native, in-product intake
-- **commons-specs** — community archive of written idea records; superseded by the same
-- **commons-artifacts** — the original deliverable/addin-sharing repo; retained only for its narrower original use case (sharing a standalone generated deliverable), with its addin-economy role moving to artifact-commons
+- **commons-idea** — intake via a hand-pasted LLM prompt; superseded once
+  commons-crew provides native in-product intake.
+- **commons-specs** — community archive of written idea records; superseded by the
+  same.
+- **commons-artifacts** — the original deliverable/addin-sharing repo; retained
+  only for its narrower original use case (sharing a standalone generated
+  deliverable), its addin-economy role having moved to artifact-commons.
 
 ### Maintenance (keep the product honest over time; no end user touches these)
-
-- **commons-keeper** — independent catalog health and cross-repo security review. Deliberately external and independent by design — the same reason labor-commons-curator's certification has to be independent of the thing it certifies.
-- **labor-commons-curator** — the specialist "contract" and an independently graded certification pipeline for trusting what's in the catalog. Independent for the same reason as commons-keeper.
-- **commons-devloop** — self-hosted autonomous development engine (issue in, reviewed PR out). Actively in use today, but transitional: its job — build capability — is exactly what commons-board is missing internally. Once commons-crew's recursive delegation gives commons-board real build capacity of its own, an external automation engine doing the same job from outside becomes redundant. Expected to be retired or absorbed into artifact-commons/commons-board, not maintained indefinitely as separate infrastructure.
+- **commons-keeper** — independent catalog health and cross-repo security review.
+  External and independent by design.
+- **labor-commons-curator** — the specialist contract and an independently graded
+  certification pipeline. Independent for the same reason.
+- **commons-devloop** — self-hosted autonomous development engine (issue in,
+  reviewed PR out). Transitional: its job is build capability, which is what
+  commons-board is meant to grow internally via commons-crew's recursive
+  delegation. Slated to be retired or absorbed once that capacity exists, not
+  maintained indefinitely.
 
 ### Delivery (how the product reaches people; not the product)
+- **foundation-site** — the public website; presence, not integration.
+- **open-labor-foundation** — this repository; the org-level home for `VISION.md`,
+  `ARCHITECTURE.md`, and `GOVERNANCE.md`. Other repos draw from it rather than
+  each carrying their own account.
 
-- **foundation-site** — the public-facing website. Live, deployed, intentionally honest about how much of the stack is actually usable today. Mostly disconnected from the rest of the stack by design — its job is presence, not integration.
-- **open-labor-foundation** — this repository. The org-level home for documentation like this one; other repos should draw from it rather than each carrying their own account of the vision.
+## Governance wiring
 
-## Governance authority
+The two governance questions (defined in `VISION.md`, modeled in `GOVERNANCE.md`)
+are realized by distinct mechanisms:
 
-This splits into two distinct questions that were previously conflated as one.
+- **Per-organization authority** — commons-board's autonomy tiers, synced down
+  into commons-crew's delegation gate.
+- **Platform-level authority (certification)** — labor-commons-curator's
+  certification gate plus commons-keeper's scoring loop, run independently of the
+  catalog they check, invoked by labor-commons CI on records marked for
+  publication. artifact-commons requires its own equivalent gate before an
+  artifact is surfaced as a trusted match rather than merely discovered;
+  `GOVERNANCE.md`'s model extends to it directly.
 
-**Both questions have a ratified model in [GOVERNANCE.md](GOVERNANCE.md).** Per-organization authority is already answered by a mechanism that exists today — commons-board's autonomy tiers — and is now stated as policy rather than left implicit in the autonomy-tier code. Platform-level authority — what it takes for something to be trusted enough to be treated as binding across the whole commons, not just within one org's deployment — was the open question; `GOVERNANCE.md` states the target model (who has standing to certify, how disagreement is handled, how a certification gets revoked). **Correction:** an earlier version of this section said neither mechanism grounding that model was built, and later, that the two weren't wired to each other or to a real publish flow. Both corrections are now stale in turn: labor-commons-curator's certification gate is real and merged (all 13 tracked issues closed), commons-keeper's scoring loop checks real content, and — the piece that used to be missing — labor-commons's own CI now runs the gate on any PR that sets `status: published`, with a scheduled workflow retroactively sweeping the rest of the catalog. **What's actually still open:** the provider secrets (`CERTIFY_PROVIDER_BASE_URL`/`API_KEY`/`MODEL`) that make either pipeline enforce rather than just warn haven't been configured on either repo yet — the mechanism is real and merged, but hasn't certified a record in production. See `GOVERNANCE.md`'s own "Current implementation status" note for the precise, current split. artifact-commons will need the equivalent certification gate before an artifact is trusted enough to be surfaced as a match rather than merely discovered — not yet built (see artifact-commons, above) — `GOVERNANCE.md`'s model is written to extend to it directly once it exists, not to be re-decided.
+## Cross-cutting structure
 
-## artifact-commons matching
-
-Resolved: matching is a commons-crew tool, not a separate service. Before commons-crew's tool-execution loop reaches for build capability to close a gap, its first call is a search against artifact-commons — the same governed loop (propose, approve, execute) that already exists, just with one more tool type added to it. There is no separate matching engine to design or build.
-
-## Modification path
-
-Resolved: adapting an existing artifact is not architecturally distinct from building one from scratch. Both run through the same commons-crew tool-execution loop (edit_file, write_file, and so on) — the only difference is whether that loop starts from an existing artifact's content or a blank slate. An exact match needs no execution at all; a close match runs the loop seeded with the existing file; no match runs the same loop from nothing.
+- **artifact-commons matching is a commons-crew tool, not a separate service.**
+  Before build capability is used, commons-crew's tool loop calls a search against
+  artifact-commons through the same propose/approve/execute loop — one more tool
+  type, no separate matching engine.
+- **Adapting an artifact is not distinct from building one.** Both run through the
+  same commons-crew tool loop (`edit_file`, `write_file`, …); the only difference
+  is whether the loop starts from an existing artifact's content or a blank slate.
+  An exact match needs no execution; a close match seeds the loop; no match runs
+  it from nothing.

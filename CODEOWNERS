@@ -1,1 +1,11 @@
 * @jkmurphy-alt
+
+# Inert unless branch protection on `main` has
+# "Require review from Code Owners" enabled.
+
+# The vision is human-owned and never edited by automation.
+/VISION.md          @jkmurphy-alt
+
+# Structure and governance change deliberately, with human review.
+/ARCHITECTURE.md    @jkmurphy-alt
+/GOVERNANCE.md      @jkmurphy-alt
