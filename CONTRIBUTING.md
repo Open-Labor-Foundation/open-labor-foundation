@@ -57,3 +57,30 @@ The foundation's governance model — how collectives form, how decisions get ma
 This foundation exists to benefit workers. Contributions that serve extractive interests — corporate capture, proprietary forks that take without giving back, undermining the collective model — are outside the scope of this project.
 
 See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for the full expectations.
+
+## Documents and their boundaries
+
+Three org-level documents have strict, separate roles. Keep them separate.
+
+- **`VISION.md` — the frozen target.** What the stack is, and the invariants any
+  correct version satisfies. It does not move for implementation reasons.
+  Automation and agents read it as the target and never modify it. A change to
+  `VISION.md` is a deliberate, human-authored change of direction, proposed in
+  its own PR and reviewed as such — never bundled with feature work, never a
+  status update.
+- **`ARCHITECTURE.md` — the structure.** How the repos wire together. Update it
+  when the wiring genuinely changes. It records no progress: no "built,"
+  "merged," "verified," "current gap," or corrections. Describing a mechanism
+  here does not assert it exists — build state lives in issues.
+- **Status lives only in issues and the project board.** What is built, in
+  progress, broken, or planned goes there and nowhere else. If you are about to
+  write "now works" / "now fixed" / "still open" into a document, you are editing
+  the wrong place.
+
+### For agents and automated contributors
+
+- Read `VISION.md` and `ARCHITECTURE.md` as context; treat `VISION.md` as the
+  acceptance target.
+- Never open a PR that modifies `VISION.md`.
+- Write all status — completion, verification, blockers — to issues, never into
+  `VISION.md` or `ARCHITECTURE.md`.
